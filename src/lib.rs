@@ -4,6 +4,7 @@
 extern crate libzfs_sys as sys;
 
 use std::ffi::CStr;
+use std::os::raw::c_void;
 
 mod string;
 mod error;
@@ -73,9 +74,8 @@ impl ZPool {
 
     pub fn get_name(&self) -> SafeString {
         let cstr = unsafe { CStr::from_ptr(sys::zpool_get_name(self.handle)) };
-        SafeString::from(
-            cstr.to_string_lossy()
-                .into_owned())
+        let utf8_verified = cstr.to_str().expect("invalid UTF8 in pool name");
+        SafeString::from(utf8_verified.to_owned())
     }
 }
 
@@ -93,15 +93,98 @@ pub struct ZfsDataset {
 }
 
 impl ZfsDataset {
+    /// Get the type of this dataset.
     pub fn get_type(&self) -> ZfsType {
         ZfsType::from(unsafe { sys::zfs_get_type(self.handle) })
     }
 
+    /// Get the name of this dataset.
     pub fn get_name(&self) -> SafeString {
         let cstr = unsafe { CStr::from_ptr(sys::zfs_get_name(self.handle)) };
-        SafeString::from(
-            cstr.to_string_lossy()
-                .into_owned())
+        let utf8_verified = cstr.to_str().expect("invalid UTF8 in dataset name");
+        SafeString::from(utf8_verified.to_owned())
+    }
+
+    /// Get the pool this dataset belongs to.
+    pub fn get_pool(&self) -> ZPool {
+        let handle = unsafe { sys::zfs_get_pool_handle(self.handle) };
+        ZPool { handle }
+    }
+
+    /// Get the name of the pool this dataset belongs to.
+    pub fn get_pool_name(&self) -> SafeString {
+        let cstr = unsafe { CStr::from_ptr(sys::zfs_get_pool_name(self.handle)) };
+        let utf8_verified = cstr.to_str().expect("invalid UTF8 in pool name");
+        SafeString::from(utf8_verified.to_owned())
+    }
+
+    // It would be cooler to have iterator methods that take closures, but closures can't be made
+    // into C function pointers...
+    //pub fn foreach_snapshot<F, T>(
+
+    /// Get all snapshots of this dataset.
+    pub fn get_snapshots(&self) -> Vec<ZfsDataset> {
+        let mut snapshots = Vec::<ZfsDataset>::new();
+        let vec_p = &mut snapshots as *mut _ as *mut c_void;
+        unsafe {
+            sys::zfs_iter_snapshots(
+                self.handle,
+                0, // "simple"
+                Some(zfs_iter_collect),
+                vec_p);
+        }
+        snapshots
+    }
+
+    /// Get all snapshots of this dataset, ordered by creation time (oldest first).
+    pub fn get_snapshots_ordered(&self) -> Vec<ZfsDataset> {
+        let mut snapshots = Vec::<ZfsDataset>::new();
+        let vec_p = &mut snapshots as *mut _ as *mut c_void;
+        unsafe {
+            sys::zfs_iter_snapshots_sorted(
+                self.handle,
+                Some(zfs_iter_collect),
+                vec_p);
+        }
+        snapshots
+    }
+
+    /// Get all filesystems under (not including) this one.
+    pub fn get_filesystems(&self) -> Vec<ZfsDataset> {
+        let mut filesystems = Vec::<ZfsDataset>::new();
+        let vec_p = &mut filesystems as *mut _ as *mut c_void;
+        unsafe {
+            sys::zfs_iter_filesystems(
+                self.handle,
+                Some(zfs_iter_collect),
+                vec_p);
+        }
+        filesystems
+    }
+
+    pub fn get_children(&self) -> Vec<ZfsDataset> {
+        let mut datasets = Vec::<ZfsDataset>::new();
+        let vec_p = &mut datasets as *mut _ as *mut c_void;
+        unsafe {
+            sys::zfs_iter_children(
+                self.handle,
+                Some(zfs_iter_collect),
+                vec_p);
+        }
+        datasets
+    }
+}
+
+extern "C" fn zfs_iter_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
+    let collected = unsafe { &mut *(context as *mut Vec<ZfsDataset>) };
+    collected.push(ZfsDataset { handle });
+    0
+}
+
+impl Clone for ZfsDataset {
+    fn clone(&self) -> Self {
+        let handle = unsafe { sys::zfs_handle_dup(self.handle) };
+        ZfsDataset { handle }
     }
 }
 
