@@ -118,10 +118,6 @@ impl Dataset {
         SafeString::from(utf8_verified.to_owned())
     }
 
-    // It would be cooler to have iterator methods that take closures, but closures can't be made
-    // into C function pointers...
-    //pub fn foreach_snapshot<F, T>(
-
     /// Get all snapshots of this dataset.
     pub fn get_snapshots(&self) -> Vec<Dataset> {
         let mut snapshots = Vec::<Dataset>::new();
@@ -155,8 +151,38 @@ impl Dataset {
         snapshots
     }
 
+    /// Execute a callback function for each snapshot of this dataset.
+    pub fn foreach_snapshot(&self, callback: Box<dyn FnMut(Dataset)>) {
+        let mut context = ZfsIterContext { callback };
+        unsafe {
+            sys::zfs_iter_snapshots(
+                self.handle,
+                0,
+                Some(zfs_iter_handler),
+                &mut context as *mut _ as *mut c_void,
+                0,
+                0,
+                );
+        }
+    }
+
+    /// Execute a callback function for each snapshot of this dataset, ordered by creation time
+    /// (oldest first).
+    pub fn foreach_snapshot_ordered(&self, callback: Box<dyn FnMut(Dataset)>) {
+        let mut context = ZfsIterContext { callback };
+        unsafe {
+            sys::zfs_iter_snapshots_sorted(
+                self.handle,
+                Some(zfs_iter_handler),
+                &mut context as *mut _ as *mut c_void,
+                0,
+                0,
+                );
+        }
+    }
+
     /// Get all filesystems under (not including) this one.
-    pub fn get_filesystems(&self) -> Vec<Dataset> {
+    pub fn get_child_filesystems(&self) -> Vec<Dataset> {
         let mut filesystems = Vec::<Dataset>::new();
         let vec_p = &mut filesystems as *mut _ as *mut c_void;
         unsafe {
@@ -168,7 +194,8 @@ impl Dataset {
         filesystems
     }
 
-    pub fn get_children(&self) -> Vec<Dataset> {
+    /// Get all child datasets of this one, of all types (snapshot, filesystem, etc.).
+    pub fn get_all_children(&self) -> Vec<Dataset> {
         let mut datasets = Vec::<Dataset>::new();
         let vec_p = &mut datasets as *mut _ as *mut c_void;
         unsafe {
@@ -184,6 +211,16 @@ impl Dataset {
 extern "C" fn zfs_iter_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
     let collected = unsafe { &mut *(context as *mut Vec<Dataset>) };
     collected.push(Dataset { handle });
+    0
+}
+
+struct ZfsIterContext {
+    callback: Box<dyn FnMut(Dataset)>,
+}
+
+extern "C" fn zfs_iter_handler(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
+    let ctx = unsafe { &mut *(context as *mut ZfsIterContext) };
+    (ctx.callback)(Dataset { handle });
     0
 }
 

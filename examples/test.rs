@@ -10,8 +10,8 @@ fn main() {
     let pool = client.pool_by_name(&poolname.into())
         .expect("pool fail");
     println!("{:?}", pool);
-    println!("{:?}", pool.get_name());
-    println!("{:?}", pool.get_state());
+    println!("name: {:?}", pool.get_name());
+    println!("state: {:?}", pool.get_state());
 
     println!();
     println!("Opening dataset {:?}", dsname);
@@ -20,10 +20,16 @@ fn main() {
             libzfs::DatasetType::Filesystem.into())
         .expect("dataset fail");
     println!("{:?}", ds);
-    println!("{:?}", ds.get_name());
-    println!("{:?}", ds.get_type());
+    println!("name: {:?}", ds.get_name());
+    println!("type: {:?}", ds.get_type());
 
-    for snap in ds.get_filesystems() {
-        println!("{:?}", snap.get_name());
+    println!("sub filesystems:");
+    for fs in ds.get_child_filesystems() {
+        println!("\t{:?}", fs.get_name());
     }
+
+    println!("snapshots:");
+    ds.foreach_snapshot_ordered(Box::new(|snap| {
+        println!("\t{:?}", snap.get_name());
+    }));
 }
