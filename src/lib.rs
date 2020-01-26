@@ -32,9 +32,9 @@ impl LibZfs {
         self.ptr_or_err(handle).map(|handle| ZPool { handle })
     }
 
-    pub fn dataset_by_name(&self, name: &SafeString, types: ZfsTypeMask) -> Result<ZfsDataset> {
+    pub fn dataset_by_name(&self, name: &SafeString, types: DatasetTypeMask) -> Result<Dataset> {
         let handle = unsafe { sys::zfs_open(self.handle, name.as_ptr(), types.0 as i32) };
-        self.ptr_or_err(handle).map(|handle| ZfsDataset { handle })
+        self.ptr_or_err(handle).map(|handle| Dataset { handle })
     }
 
     fn ptr_or_err<T>(&self, ptr: *mut T) -> Result<*mut T> {
@@ -88,14 +88,14 @@ impl Drop for ZPool {
 }
 
 #[derive(Debug)]
-pub struct ZfsDataset {
+pub struct Dataset {
     handle: *mut sys::zfs_handle_t,
 }
 
-impl ZfsDataset {
+impl Dataset {
     /// Get the type of this dataset.
-    pub fn get_type(&self) -> ZfsType {
-        ZfsType::from(unsafe { sys::zfs_get_type(self.handle) })
+    pub fn get_type(&self) -> DatasetType {
+        DatasetType::from(unsafe { sys::zfs_get_type(self.handle) })
     }
 
     /// Get the name of this dataset.
@@ -123,8 +123,8 @@ impl ZfsDataset {
     //pub fn foreach_snapshot<F, T>(
 
     /// Get all snapshots of this dataset.
-    pub fn get_snapshots(&self) -> Vec<ZfsDataset> {
-        let mut snapshots = Vec::<ZfsDataset>::new();
+    pub fn get_snapshots(&self) -> Vec<Dataset> {
+        let mut snapshots = Vec::<Dataset>::new();
         let vec_p = &mut snapshots as *mut _ as *mut c_void;
         unsafe {
             sys::zfs_iter_snapshots(
@@ -137,8 +137,8 @@ impl ZfsDataset {
     }
 
     /// Get all snapshots of this dataset, ordered by creation time (oldest first).
-    pub fn get_snapshots_ordered(&self) -> Vec<ZfsDataset> {
-        let mut snapshots = Vec::<ZfsDataset>::new();
+    pub fn get_snapshots_ordered(&self) -> Vec<Dataset> {
+        let mut snapshots = Vec::<Dataset>::new();
         let vec_p = &mut snapshots as *mut _ as *mut c_void;
         unsafe {
             sys::zfs_iter_snapshots_sorted(
@@ -150,8 +150,8 @@ impl ZfsDataset {
     }
 
     /// Get all filesystems under (not including) this one.
-    pub fn get_filesystems(&self) -> Vec<ZfsDataset> {
-        let mut filesystems = Vec::<ZfsDataset>::new();
+    pub fn get_filesystems(&self) -> Vec<Dataset> {
+        let mut filesystems = Vec::<Dataset>::new();
         let vec_p = &mut filesystems as *mut _ as *mut c_void;
         unsafe {
             sys::zfs_iter_filesystems(
@@ -162,8 +162,8 @@ impl ZfsDataset {
         filesystems
     }
 
-    pub fn get_children(&self) -> Vec<ZfsDataset> {
-        let mut datasets = Vec::<ZfsDataset>::new();
+    pub fn get_children(&self) -> Vec<Dataset> {
+        let mut datasets = Vec::<Dataset>::new();
         let vec_p = &mut datasets as *mut _ as *mut c_void;
         unsafe {
             sys::zfs_iter_children(
@@ -176,19 +176,19 @@ impl ZfsDataset {
 }
 
 extern "C" fn zfs_iter_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
-    let collected = unsafe { &mut *(context as *mut Vec<ZfsDataset>) };
-    collected.push(ZfsDataset { handle });
+    let collected = unsafe { &mut *(context as *mut Vec<Dataset>) };
+    collected.push(Dataset { handle });
     0
 }
 
-impl Clone for ZfsDataset {
+impl Clone for Dataset {
     fn clone(&self) -> Self {
         let handle = unsafe { sys::zfs_handle_dup(self.handle) };
-        ZfsDataset { handle }
+        Dataset { handle }
     }
 }
 
-impl Drop for ZfsDataset {
+impl Drop for Dataset {
     fn drop(&mut self) {
         unsafe {
             sys::zfs_close(self.handle);
@@ -255,7 +255,7 @@ translate_enum! {
 }
 
 translate_enum! {
-    new_name: ZfsType,
+    new_name: DatasetType,
     sys_name: sys::zfs_type_t,
     repr: u32,
     variants: {
@@ -268,30 +268,30 @@ translate_enum! {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ZfsTypeMask(u32);
+pub struct DatasetTypeMask(u32);
 
-impl ZfsTypeMask {
+impl DatasetTypeMask {
     pub fn all() -> Self {
-        ZfsTypeMask(std::u32::MAX)
+        DatasetTypeMask(std::u32::MAX)
     }
 }
 
-impl From<ZfsType> for ZfsTypeMask {
-    fn from(t: ZfsType) -> ZfsTypeMask {
-        ZfsTypeMask(t.into())
+impl From<DatasetType> for DatasetTypeMask {
+    fn from(t: DatasetType) -> DatasetTypeMask {
+        DatasetTypeMask(t.into())
     }
 }
 
-impl std::ops::BitOr for ZfsType {
-    type Output = ZfsTypeMask;
-    fn bitor(self, rhs: ZfsType) -> Self::Output {
-        ZfsTypeMask(Into::<u32>::into(self) | Into::<u32>::into(rhs))
+impl std::ops::BitOr for DatasetType {
+    type Output = DatasetTypeMask;
+    fn bitor(self, rhs: DatasetType) -> Self::Output {
+        DatasetTypeMask(Into::<u32>::into(self) | Into::<u32>::into(rhs))
     }
 }
 
-impl std::ops::BitOr<ZfsType> for ZfsTypeMask {
-    type Output = ZfsTypeMask;
-    fn bitor(self, rhs: ZfsType) -> Self::Output {
-        ZfsTypeMask(self.0 | Into::<u32>::into(rhs))
+impl std::ops::BitOr<DatasetType> for DatasetTypeMask {
+    type Output = DatasetTypeMask;
+    fn bitor(self, rhs: DatasetType) -> Self::Output {
+        DatasetTypeMask(self.0 | Into::<u32>::into(rhs))
     }
 }
