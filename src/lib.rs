@@ -131,7 +131,10 @@ impl Dataset {
                 self.handle,
                 0, // "simple"
                 Some(zfs_iter_collect),
-                vec_p);
+                vec_p,
+                0, // min_txg: none
+                0, // max_txg: none
+                );
         }
         snapshots
     }
@@ -144,7 +147,10 @@ impl Dataset {
             sys::zfs_iter_snapshots_sorted(
                 self.handle,
                 Some(zfs_iter_collect),
-                vec_p);
+                vec_p,
+                0, // min_txg: none
+                0, // max_txg: none
+                );
         }
         snapshots
     }
