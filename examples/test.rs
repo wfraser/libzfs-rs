@@ -24,12 +24,19 @@ fn main() {
     println!("type: {:?}", ds.get_type());
 
     println!("sub filesystems:");
-    for fs in ds.get_child_filesystems() {
+    for fs in ds.get_child_filesystems().expect("get_child_filesystems") {
         println!("\t{:?}", fs.get_name());
+    }
+
+    println!("sub filesystems (recursively):");
+    for ds in ds.get_all_dependents().expect("get_dependents") {
+        if ds.get_type() == libzfs::DatasetType::Filesystem {
+            println!("\t{:?}", ds.get_name());
+        }
     }
 
     println!("snapshots:");
     ds.foreach_snapshot_ordered(Box::new(|snap| {
         println!("\t{:?}", snap.get_name());
-    }));
+    })).expect("foreach_snapshot_ordered");
 }

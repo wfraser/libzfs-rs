@@ -19,6 +19,7 @@ impl SafeString {
 impl Into<String> for SafeString {
     fn into(self) -> String {
         let bytes = self.inner.into_bytes();
+        // Safety: we already checked its UTF-8'ness
         unsafe { String::from_utf8_unchecked(bytes) }
     }
 }
@@ -39,7 +40,9 @@ impl<'a> From<&'a str> for SafeString {
 
 impl AsRef<str> for SafeString {
     fn as_ref(&self) -> &str {
-        self.inner.to_str().unwrap()
+        let bytes = self.inner.to_bytes();
+        // Safety: we already checked its UTF-8'ness
+        unsafe { std::str::from_utf8_unchecked(bytes) }
     }
 }
 

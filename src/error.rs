@@ -4,8 +4,6 @@ use std::ffi::{CStr};
 use std::fmt;
 use std::mem::transmute;
 
-use super::LibZfs;
-
 pub type Result<T> = ::std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,19 +13,16 @@ pub struct ZfsError {
 }
 
 impl ZfsError {
-    pub fn last_error(lib: &LibZfs) -> Self {
-        let code: sys::zfs_error = unsafe { transmute(sys::libzfs_errno(lib.handle)) };
-        let msg_cstr = unsafe { CStr::from_ptr(sys::libzfs_error_description(lib.handle)) };
+    //pub fn last_error(lib: &LibZfs) -> Self {
+    pub fn last_error(handle: *mut sys::libzfs_handle_t) -> Self {
+        let code: sys::zfs_error = unsafe { transmute(sys::libzfs_errno(handle)) };
+        let msg_cstr = unsafe { CStr::from_ptr(sys::libzfs_error_description(handle)) };
         let msg = msg_cstr.to_string_lossy().into_owned();
         ZfsError { code, msg }
     }
 }
 
-impl ::std::error::Error for ZfsError {
-    fn description(&self) -> &str {
-        "ZFS error"
-    }
-}
+impl ::std::error::Error for ZfsError {}
 
 impl fmt::Display for ZfsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -42,10 +37,10 @@ pub enum Error {
 }
 
 impl ::std::error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Sys(ref e) => e.description(),
-            Error::Zfs(ref e) => e.description(),
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Sys(e) => Some(e),
+            Error::Zfs(e) => Some(e),
         }
     }
 }
@@ -56,5 +51,11 @@ impl fmt::Display for Error {
             Error::Sys(ref e) => e.fmt(f),
             Error::Zfs(ref e) => e.fmt(f),
         }
+    }
+}
+
+impl From<ZfsError> for Error {
+    fn from(z: ZfsError) -> Error {
+        Error::Zfs(z)
     }
 }

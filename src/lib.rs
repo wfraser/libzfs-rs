@@ -29,17 +29,49 @@ impl LibZfs {
 
     pub fn pool_by_name(&self, name: &SafeString) -> Result<ZPool> {
         let handle = unsafe { sys::zpool_open(self.handle, name.as_ptr()) };
-        self.ptr_or_err(handle).map(|handle| ZPool { handle })
+        self.ptr_or_err(handle).map(|handle| ZPool { libzfs: self.handle, handle })
     }
 
     pub fn dataset_by_name(&self, name: &SafeString, types: DatasetTypeMask) -> Result<Dataset> {
         let handle = unsafe { sys::zfs_open(self.handle, name.as_ptr(), types.0 as i32) };
-        self.ptr_or_err(handle).map(|handle| Dataset { handle })
+        self.ptr_or_err(handle).map(|handle| Dataset { libzfs: self.handle, handle })
+    }
+
+    pub fn get_zpools(&self) -> Result<Vec<ZPool>> {
+        //let mut pools = vec![];
+        struct Context {
+            libzfs: *mut sys::libzfs_handle_t,
+            pools: Vec<ZPool>,
+        }
+
+        extern "C" fn zpool_iter_collect(handle: *mut sys::zpool_handle_t, context: *mut c_void) -> i32 {
+            let ctx = unsafe { &mut *(context as *mut Context) };
+            ctx.pools.push(ZPool { libzfs: ctx.libzfs, handle });
+            0
+        }
+
+        let mut ctx = Context {
+            libzfs: self.handle,
+            pools: vec![],
+        };
+        let result = unsafe {
+            sys::zpool_iter(
+                self.handle,
+                Some(zpool_iter_collect),
+                &mut ctx as *mut _ as *mut c_void,
+            )
+        };
+
+        if result == 0 {
+            Ok(ctx.pools)
+        } else {
+            Err(ZfsError::last_error(self.handle).into())
+        }
     }
 
     fn ptr_or_err<T>(&self, ptr: *mut T) -> Result<*mut T> {
         if ptr.is_null() {
-            let zfs_err = ZfsError::last_error(self);
+            let zfs_err = ZfsError::last_error(self.handle);
             // TODO: is this valid? should we do this on EZFS_SUCCESS instead / in addition?
             if zfs_err.code != sys::zfs_error::EZFS_UNKNOWN {
                 Err(Error::Zfs(zfs_err))
@@ -62,6 +94,7 @@ impl Drop for LibZfs {
 
 #[derive(Debug)]
 pub struct ZPool {
+    libzfs: *mut sys::libzfs_handle_t,
     handle: *mut sys::zpool_handle_t,
 }
 
@@ -89,6 +122,7 @@ impl Drop for ZPool {
 
 #[derive(Debug)]
 pub struct Dataset {
+    libzfs: *mut sys::libzfs_handle_t,
     handle: *mut sys::zfs_handle_t,
 }
 
@@ -108,7 +142,7 @@ impl Dataset {
     /// Get the pool this dataset belongs to.
     pub fn get_pool(&self) -> ZPool {
         let handle = unsafe { sys::zfs_get_pool_handle(self.handle) };
-        ZPool { handle }
+        ZPool { libzfs: self.libzfs, handle }
     }
 
     /// Get the name of the pool this dataset belongs to.
@@ -119,115 +153,164 @@ impl Dataset {
     }
 
     /// Get all snapshots of this dataset.
-    pub fn get_snapshots(&self) -> Vec<Dataset> {
-        let mut snapshots = Vec::<Dataset>::new();
-        let vec_p = &mut snapshots as *mut _ as *mut c_void;
-        unsafe {
+    pub fn get_snapshots(&self) -> Result<Vec<Dataset>> {
+        let mut ctx = ZfsIterCollectContext {
+            libzfs: self.libzfs,
+            vec: vec![],
+        };
+        let result = unsafe {
             sys::zfs_iter_snapshots(
                 self.handle,
                 0, // "simple"
                 Some(zfs_iter_collect),
-                vec_p,
+                &mut ctx as *mut _ as *mut c_void,
                 0, // min_txg: none
                 0, // max_txg: none
-                );
+            )
+        };
+        if result == 0 {
+            Ok(ctx.vec)
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
-        snapshots
     }
 
     /// Get all snapshots of this dataset, ordered by creation time (oldest first).
-    pub fn get_snapshots_ordered(&self) -> Vec<Dataset> {
-        let mut snapshots = Vec::<Dataset>::new();
-        let vec_p = &mut snapshots as *mut _ as *mut c_void;
-        unsafe {
+    pub fn get_snapshots_ordered(&self) -> Result<Vec<Dataset>> {
+        let mut ctx = ZfsIterCollectContext {
+            libzfs: self.libzfs,
+            vec: vec![],
+        };
+        let result = unsafe {
             sys::zfs_iter_snapshots_sorted(
                 self.handle,
                 Some(zfs_iter_collect),
-                vec_p,
+                &mut ctx as *mut _ as *mut c_void,
                 0, // min_txg: none
                 0, // max_txg: none
-                );
+            )
+        };
+        if result == 0 {
+            Ok(ctx.vec)
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
-        snapshots
     }
 
     /// Execute a callback function for each snapshot of this dataset.
-    pub fn foreach_snapshot(&self, callback: Box<dyn FnMut(Dataset)>) {
-        let mut context = ZfsIterContext { callback };
-        unsafe {
+    pub fn foreach_snapshot(&self, callback: Box<dyn FnMut(Dataset)>) -> Result<()> {
+        let mut ctx = ZfsIterCallbackContext {
+            libzfs: self.libzfs,
+            callback,
+        };
+        let result = unsafe {
             sys::zfs_iter_snapshots(
                 self.handle,
                 0,
-                Some(zfs_iter_handler),
-                &mut context as *mut _ as *mut c_void,
+                Some(zfs_iter_callback),
+                &mut ctx as *mut _ as *mut c_void,
                 0,
                 0,
-                );
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
     }
 
     /// Execute a callback function for each snapshot of this dataset, ordered by creation time
     /// (oldest first).
-    pub fn foreach_snapshot_ordered(&self, callback: Box<dyn FnMut(Dataset)>) {
-        let mut context = ZfsIterContext { callback };
-        unsafe {
+    pub fn foreach_snapshot_ordered<'a>(&self, callback: Box<dyn FnMut(Dataset)>) -> Result<()> {
+        let mut ctx = ZfsIterCallbackContext {
+            libzfs: self.libzfs,
+            callback,
+        };
+        let result = unsafe {
             sys::zfs_iter_snapshots_sorted(
                 self.handle,
-                Some(zfs_iter_handler),
-                &mut context as *mut _ as *mut c_void,
+                Some(zfs_iter_callback),
+                &mut ctx as *mut _ as *mut c_void,
                 0,
                 0,
-                );
+                )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
     }
 
-    /// Get all filesystems under (not including) this one.
-    pub fn get_child_filesystems(&self) -> Vec<Dataset> {
-        let mut filesystems = Vec::<Dataset>::new();
-        let vec_p = &mut filesystems as *mut _ as *mut c_void;
-        unsafe {
+    /// Get all direct descendent filesystems under this one.
+    pub fn get_child_filesystems(&self) -> Result<Vec<Dataset>> {
+        let mut ctx = ZfsIterCollectContext {
+            libzfs: self.libzfs,
+            vec: vec![],
+        };
+        let result = unsafe {
             sys::zfs_iter_filesystems(
                 self.handle,
                 Some(zfs_iter_collect),
-                vec_p);
+                &mut ctx as *mut _ as *mut c_void,
+                )
+        };
+        if result == 0 {
+            Ok(ctx.vec)
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
-        filesystems
     }
 
-    /// Get all child datasets of this one, of all types (snapshot, filesystem, etc.).
-    pub fn get_all_children(&self) -> Vec<Dataset> {
-        let mut datasets = Vec::<Dataset>::new();
-        let vec_p = &mut datasets as *mut _ as *mut c_void;
-        unsafe {
-            sys::zfs_iter_children(
+    /// Get all child datasets of this one, recursively, of all types (snapshot, filesystem, etc.).
+    pub fn get_all_dependents(&self) -> Result<Vec<Dataset>> {
+        let mut ctx = ZfsIterCollectContext {
+            libzfs: self.libzfs,
+            vec: vec![],
+        };
+        let result = unsafe {
+            sys::zfs_iter_dependents(
                 self.handle,
+                1, // allow recursion
                 Some(zfs_iter_collect),
-                vec_p);
+                &mut ctx as *mut _ as *mut c_void,
+            )
+        };
+        if result == 0 {
+            Ok(ctx.vec)
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
         }
-        datasets
     }
+}
+
+struct ZfsIterCollectContext {
+    libzfs: *mut sys::libzfs_handle_t,
+    vec: Vec<Dataset>,
 }
 
 extern "C" fn zfs_iter_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
-    let collected = unsafe { &mut *(context as *mut Vec<Dataset>) };
-    collected.push(Dataset { handle });
+    let ctx = unsafe { &mut *(context as *mut ZfsIterCollectContext) };
+    ctx.vec.push(Dataset { libzfs: ctx.libzfs, handle });
     0
 }
 
-struct ZfsIterContext {
+struct ZfsIterCallbackContext {
+    libzfs: *mut sys::libzfs_handle_t,
     callback: Box<dyn FnMut(Dataset)>,
 }
 
-extern "C" fn zfs_iter_handler(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
-    let ctx = unsafe { &mut *(context as *mut ZfsIterContext) };
-    (ctx.callback)(Dataset { handle });
+extern "C" fn zfs_iter_callback(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
+    let ctx = unsafe { &mut *(context as *mut ZfsIterCallbackContext) };
+    (ctx.callback)(Dataset { libzfs: ctx.libzfs, handle });
     0
 }
 
 impl Clone for Dataset {
     fn clone(&self) -> Self {
         let handle = unsafe { sys::zfs_handle_dup(self.handle) };
-        Dataset { handle }
+        Dataset { libzfs: self.libzfs, handle }
     }
 }
 
