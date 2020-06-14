@@ -43,10 +43,14 @@ impl LibZfs {
     {
         let nvl = self.build_nvlist(names)?;
 
-        let ret = if 0 != unsafe { sys::zfs_snapshot_nvl(self.handle, nvl, std::ptr::null_mut()) } {
-            self.get_last_error()
-        } else {
-            Ok(())
+        // Need to check if empty, otherwise it segfaults.
+        let ret = match unsafe { sys::nvlist_empty(nvl) } {
+            0 => if 0 != unsafe { sys::zfs_snapshot_nvl(self.handle, nvl, std::ptr::null_mut()) } {
+                self.get_last_error()
+            } else {
+                Ok(())
+            },
+            _ => Ok(()),
         };
 
         unsafe { sys::nvlist_free(nvl) };
@@ -60,9 +64,13 @@ impl LibZfs {
     {
         let nvl = self.build_nvlist(names)?;
 
-        let ret = match unsafe { sys::zfs_destroy_snaps_nvl(self.handle, nvl, 0) } {
-            0 => Ok(()),
-            _ => self.get_last_error(),
+        // Need to check if empty, otherwise it segfaults.
+        let ret = match unsafe { sys::nvlist_empty(nvl) } {
+            0 => match unsafe { sys::zfs_destroy_snaps_nvl(self.handle, nvl, 0) } {
+                0 => Ok(()),
+                _ => self.get_last_error(),
+            },
+            _ => Ok(()),
         };
 
         unsafe { sys::nvlist_free(nvl) };
