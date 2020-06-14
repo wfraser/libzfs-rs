@@ -37,6 +37,58 @@ impl LibZfs {
         self.ptr_or_err(handle).map(|handle| Dataset { libzfs: self.handle, handle })
     }
 
+    pub fn create_snapshots<I, T>(&self, names: I) -> Result<()>
+        where I: Iterator<Item = T>,
+              T: AsRef<str>,
+    {
+        let nvl = self.build_nvlist(names)?;
+
+        let ret = if 0 != unsafe { sys::zfs_snapshot_nvl(self.handle, nvl, std::ptr::null_mut()) } {
+            self.get_last_error()
+        } else {
+            Ok(())
+        };
+
+        unsafe { sys::nvlist_free(nvl) };
+
+        ret
+    }
+
+    pub fn destroy_snapshots<I, T>(&self, names: I) -> Result<()>
+        where I: Iterator<Item = T>,
+              T: AsRef<str>,
+    {
+        let nvl = self.build_nvlist(names)?;
+
+        let ret = match unsafe { sys::zfs_destroy_snaps_nvl(self.handle, nvl, 0) } {
+            0 => Ok(()),
+            _ => self.get_last_error(),
+        };
+
+        unsafe { sys::nvlist_free(nvl) };
+
+        ret
+    }
+
+    fn build_nvlist<I, T>(&self, names: I) -> Result<*mut sys::nvlist_t>
+        where I: Iterator<Item = T>,
+              T: AsRef<str>,
+    {
+        let mut nvl = std::ptr::null_mut();
+
+        if 0 != unsafe { sys::nvlist_alloc(&mut nvl as *mut _, sys::NV_UNIQUE_NAME, 0) } {
+            return self.get_last_error();
+        }
+
+        for name in names {
+            let mut cstr = name.as_ref().to_owned();
+            cstr.push('\0');
+            unsafe { sys::fnvlist_add_boolean(nvl, cstr.as_ptr() as *const _) };
+        }
+
+        Ok(nvl)
+    }
+
     pub fn get_zpools(&self) -> Result<Vec<ZPool>> {
         //let mut pools = vec![];
         struct Context {
@@ -71,15 +123,19 @@ impl LibZfs {
 
     fn ptr_or_err<T>(&self, ptr: *mut T) -> Result<*mut T> {
         if ptr.is_null() {
-            let zfs_err = ZfsError::last_error(self.handle);
-            // TODO: is this valid? should we do this on EZFS_SUCCESS instead / in addition?
-            if zfs_err.code != sys::zfs_error::EZFS_UNKNOWN {
-                Err(Error::Zfs(zfs_err))
-            } else {
-                Err(Error::Sys(std::io::Error::last_os_error()))
-            }
+            self.get_last_error()
         } else {
             Ok(ptr)
+        }
+    }
+
+    fn get_last_error<T>(&self) -> Result<T> {
+        let zfs_err = ZfsError::last_error(self.handle);
+        // TODO: is this valid? should we do this on EZFS_SUCCESS instead / in addition?
+        if zfs_err.code != sys::zfs_error::EZFS_UNKNOWN {
+            Err(Error::Zfs(zfs_err))
+        } else {
+            Err(Error::Sys(std::io::Error::last_os_error()))
         }
     }
 }
