@@ -11,3 +11,14 @@
 #![allow(improper_ctypes)]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+// Additionmal exported functions that aren't defined in the headers.
+extern "C" {
+    /// Get the progress of the send in progress.
+    pub fn zfs_send_progress(
+        zhp: *mut zfs_handle_t,
+        fd: ::std::os::raw::c_int,
+        bytes_written: *mut u64,
+        blocks_visited: *mut u64,
+        ) -> ::std::os::raw::c_int;
+}
