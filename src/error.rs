@@ -13,8 +13,7 @@ pub struct ZfsError {
 }
 
 impl ZfsError {
-    //pub fn last_error(lib: &LibZfs) -> Self {
-    pub fn last_error(handle: *mut sys::libzfs_handle_t) -> Self {
+    pub(crate) fn last_error(handle: *mut sys::libzfs_handle_t) -> Self {
         let code: sys::zfs_error = unsafe { transmute(sys::libzfs_errno(handle)) };
         let msg_cstr = unsafe { CStr::from_ptr(sys::libzfs_error_description(handle)) };
         let msg = msg_cstr.to_string_lossy().into_owned();

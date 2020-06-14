@@ -286,7 +286,7 @@ impl Dataset {
 
     /// Execute a callback function for each snapshot of this dataset, ordered by creation time
     /// (oldest first).
-    pub fn foreach_snapshot_ordered<'a>(&self, callback: Box<dyn FnMut(Dataset)>) -> Result<()> {
+    pub fn foreach_snapshot_ordered(&self, callback: Box<dyn FnMut(Dataset)>) -> Result<()> {
         let mut ctx = ZfsIterCallbackContext {
             libzfs: self.libzfs,
             callback,
@@ -298,7 +298,7 @@ impl Dataset {
                 &mut ctx as *mut _ as *mut c_void,
                 0,
                 0,
-                )
+            )
         };
         if result == 0 {
             Ok(())
@@ -318,7 +318,7 @@ impl Dataset {
                 self.handle,
                 Some(zfs_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
-                )
+            )
         };
         if result == 0 {
             Ok(ctx.vec)
