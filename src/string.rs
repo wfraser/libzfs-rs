@@ -16,9 +16,9 @@ impl SafeString {
     }
 }
 
-impl Into<String> for SafeString {
-    fn into(self) -> String {
-        let bytes = self.inner.into_bytes();
+impl From<SafeString> for String {
+    fn from(s: SafeString) -> String {
+        let bytes = s.inner.into_bytes();
         // Safety: we already checked its UTF-8'ness
         unsafe { String::from_utf8_unchecked(bytes) }
     }

@@ -420,9 +420,9 @@ macro_rules! translate_enum {
             }
         }
 
-        impl Into<$repr> for $new_name {
-            fn into(self) -> $repr {
-                unsafe { std::mem::transmute(self) }
+        impl From<$new_name> for $repr {
+            fn from(val: $new_name) -> $repr {
+                unsafe { std::mem::transmute(val) }
             }
         }
     }
