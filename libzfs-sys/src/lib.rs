@@ -6,6 +6,7 @@
 #![allow(clippy::trivially_copy_pass_by_ref)]
 #![allow(clippy::unreadable_literal)]
 #![allow(clippy::useless_transmute)]
+#![allow(clippy::upper_case_acronyms)]
 
 // this should actually be fixed, but it's not clear how: some functions have u128 return types
 #![allow(improper_ctypes)]
