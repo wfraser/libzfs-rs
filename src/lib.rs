@@ -1,7 +1,7 @@
 //! Idiomatic Rust bindings for libzfs.
 //! Copyright 2018 by William R. Fraser <wfraser@codewise.org>
 
-extern crate libzfs_sys as sys;
+use libzfs_sys as sys;
 
 use std::ffi::CStr;
 use std::os::raw::c_void;
