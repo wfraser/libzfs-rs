@@ -3,6 +3,7 @@
 
 use libzfs_sys as sys;
 
+use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::os::raw::c_void;
 
@@ -173,6 +174,64 @@ impl ZPool {
         let cstr = unsafe { CStr::from_ptr(sys::zpool_get_name(self.handle)) };
         let utf8_verified = cstr.to_str().expect("invalid UTF8 in pool name");
         SafeString::from(utf8_verified.to_owned())
+    }
+
+    pub fn get_datasets(&self) -> Result<Vec<Dataset>> {
+        struct Context {
+            libzfs: *mut sys::libzfs_handle_t,
+            datasets: Vec<Dataset>,
+        }
+
+        extern "C" fn dataset_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
+            let ctx = unsafe { &mut *(context as *mut Context) };
+            ctx.datasets.push(Dataset { libzfs: ctx.libzfs, handle });
+            0
+        }
+
+        let pool_name = self.get_name();
+
+        let root_handle = unsafe {
+            sys::zfs_open(self.libzfs, pool_name.as_ptr(), sys::zfs_type_t::ZFS_TYPE_FILESYSTEM as i32)
+        };
+        if root_handle.is_null() {
+            return Err(ZfsError::last_error(self.libzfs).into());
+        }
+
+        let mut ctx = Context {
+            libzfs: self.libzfs,
+            datasets: vec![Dataset { libzfs: self.libzfs, handle: root_handle }],
+        };
+
+        let result = unsafe {
+            sys::zfs_iter_filesystems(
+                root_handle,
+                Some(dataset_collect),
+                &mut ctx as *mut _ as *mut c_void,
+            )
+        };
+
+        if result == 0 {
+            Ok(ctx.datasets)
+        } else {
+            Err(ZfsError::last_error(self.libzfs).into())
+        }
+    }
+
+    pub fn get_datasets_recursive(&self) -> Result<Vec<Dataset>> {
+        let mut queue = VecDeque::from(self.get_datasets()?);
+
+        // Remove the pool dataset, no need to check it.
+        let mut result = vec![
+            queue.pop_front().expect("the pool itself should at least be in this list")];
+
+        while let Some(ds) = queue.pop_front() {
+            result.push(ds.clone());
+            if ds.get_type() == DatasetType::Filesystem {
+                queue.extend(ds.get_child_filesystems()?);
+            }
+        }
+
+        Ok(result)
     }
 }
 
