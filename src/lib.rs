@@ -177,17 +177,6 @@ impl ZPool {
     }
 
     pub fn get_datasets(&self) -> Result<Vec<Dataset>> {
-        struct Context {
-            libzfs: *mut sys::libzfs_handle_t,
-            datasets: Vec<Dataset>,
-        }
-
-        extern "C" fn dataset_collect(handle: *mut sys::zfs_handle_t, context: *mut c_void) -> i32 {
-            let ctx = unsafe { &mut *(context as *mut Context) };
-            ctx.datasets.push(Dataset { libzfs: ctx.libzfs, handle });
-            0
-        }
-
         let pool_name = self.get_name();
 
         let root_handle = unsafe {
@@ -197,41 +186,34 @@ impl ZPool {
             return Err(ZfsError::last_error(self.libzfs).into());
         }
 
-        let mut ctx = Context {
+        let mut ctx = ZfsIterCollectContext {
             libzfs: self.libzfs,
-            datasets: vec![Dataset { libzfs: self.libzfs, handle: root_handle }],
+            vec: vec![Dataset { libzfs: self.libzfs, handle: root_handle }],
         };
 
         let result = unsafe {
-            sys::zfs_iter_filesystems(
+            sys::zfs_iter_dependents(
                 root_handle,
-                Some(dataset_collect),
+                1, // allow recursion
+                Some(zfs_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
             )
         };
 
+        ctx.vec.retain(|ds| {
+            let typ = ds.get_type();
+            if typ == DatasetType::Bookmark || typ == DatasetType::Snapshot {
+                false
+            } else {
+                true
+            }
+        });
+
         if result == 0 {
-            Ok(ctx.datasets)
+            Ok(ctx.vec)
         } else {
             Err(ZfsError::last_error(self.libzfs).into())
         }
-    }
-
-    pub fn get_datasets_recursive(&self) -> Result<Vec<Dataset>> {
-        let mut queue = VecDeque::from(self.get_datasets()?);
-
-        // Remove the pool dataset, no need to check it.
-        let mut result = vec![
-            queue.pop_front().expect("the pool itself should at least be in this list")];
-
-        while let Some(ds) = queue.pop_front() {
-            result.push(ds.clone());
-            if ds.get_type() == DatasetType::Filesystem {
-                queue.extend(ds.get_child_filesystems()?);
-            }
-        }
-
-        Ok(result)
     }
 }
 
