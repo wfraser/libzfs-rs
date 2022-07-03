@@ -3,7 +3,6 @@
 
 use libzfs_sys as sys;
 
-use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::os::raw::c_void;
 
@@ -202,11 +201,7 @@ impl ZPool {
 
         ctx.vec.retain(|ds| {
             let typ = ds.get_type();
-            if typ == DatasetType::Bookmark || typ == DatasetType::Snapshot {
-                false
-            } else {
-                true
-            }
+            typ != DatasetType::Bookmark && typ != DatasetType::Snapshot
         });
 
         if result == 0 {
