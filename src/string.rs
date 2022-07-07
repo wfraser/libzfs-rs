@@ -3,7 +3,7 @@ use std::fmt;
 
 /// A FFI-friendly string: null-terminated, no internal nulls, well-formed UTF-8. Lets us skip
 /// checks and reallocations when passing around between functions.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SafeString {
     // TODO(wfraser): explore changing this to Vec<u8> (including null terminator) and just
     // implementing AsRef<CStr> and AsRef<str> and selected String functions on top of that.
