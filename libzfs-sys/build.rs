@@ -13,6 +13,7 @@ fn main() {
             format!("-I{}", path.to_str().expect("non-Unicode include path"))))
         .constified_enum_module("pool_state")
         .constified_enum_module("zfs_type_t")
+        .constified_enum_module("lzc_send_flags")
         //.constified_enum_module(".*_t")
         .rustified_enum("zfs_error")
         .opaque_type("libzfs_handle")

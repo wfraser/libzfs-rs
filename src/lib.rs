@@ -4,7 +4,8 @@
 use libzfs_sys as sys;
 
 use std::ffi::CStr;
-use std::os::raw::c_void;
+use std::os::raw::{c_void, c_char};
+use std::ptr;
 
 mod string;
 mod error;
@@ -98,7 +99,6 @@ impl LibZfs {
     }
 
     pub fn get_zpools(&self) -> Result<Vec<ZPool>> {
-        //let mut pools = vec![];
         struct Context {
             libzfs: *mut sys::libzfs_handle_t,
             pools: Vec<ZPool>,
@@ -114,19 +114,16 @@ impl LibZfs {
             libzfs: self.handle,
             pools: vec![],
         };
-        let result = unsafe {
+
+        ztry!(unsafe {
             sys::zpool_iter(
                 self.handle,
                 Some(zpool_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
             )
-        };
+        }, self.handle);
 
-        if result == 0 {
-            Ok(ctx.pools)
-        } else {
-            Err(ZfsError::last_error(self.handle).into())
-        }
+        Ok(ctx.pools)
     }
 
     fn ptr_or_err<T>(&self, ptr: *mut T) -> Result<*mut T> {
@@ -190,25 +187,20 @@ impl ZPool {
             vec: vec![Dataset { libzfs: self.libzfs, handle: root_handle }],
         };
 
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_dependents(
                 root_handle,
                 1, // allow recursion
                 Some(zfs_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
             )
-        };
+        }, self.libzfs);
 
         ctx.vec.retain(|ds| {
             let typ = ds.get_type();
             typ != DatasetType::Bookmark && typ != DatasetType::Snapshot
         });
-
-        if result == 0 {
-            Ok(ctx.vec)
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        Ok(ctx.vec)
     }
 }
 
@@ -258,7 +250,7 @@ impl Dataset {
             libzfs: self.libzfs,
             vec: vec![],
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_snapshots(
                 self.handle,
                 0, // "simple"
@@ -267,12 +259,8 @@ impl Dataset {
                 0, // min_txg: none
                 0, // max_txg: none
             )
-        };
-        if result == 0 {
-            Ok(ctx.vec)
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(ctx.vec)
     }
 
     /// Get all snapshots of this dataset, ordered by creation time (oldest first).
@@ -281,7 +269,7 @@ impl Dataset {
             libzfs: self.libzfs,
             vec: vec![],
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_snapshots_sorted(
                 self.handle,
                 Some(zfs_iter_collect),
@@ -289,12 +277,8 @@ impl Dataset {
                 0, // min_txg: none
                 0, // max_txg: none
             )
-        };
-        if result == 0 {
-            Ok(ctx.vec)
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(ctx.vec)
     }
 
     /// Execute a callback function for each snapshot of this dataset.
@@ -303,7 +287,7 @@ impl Dataset {
             libzfs: self.libzfs,
             callback,
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_snapshots(
                 self.handle,
                 0,
@@ -312,12 +296,8 @@ impl Dataset {
                 0,
                 0,
             )
-        };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(())
     }
 
     /// Execute a callback function for each snapshot of this dataset, ordered by creation time
@@ -327,7 +307,7 @@ impl Dataset {
             libzfs: self.libzfs,
             callback,
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_snapshots_sorted(
                 self.handle,
                 Some(zfs_iter_callback),
@@ -335,12 +315,8 @@ impl Dataset {
                 0,
                 0,
             )
-        };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(())
     }
 
     /// Get all direct descendent filesystems under this one.
@@ -349,18 +325,14 @@ impl Dataset {
             libzfs: self.libzfs,
             vec: vec![],
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_filesystems(
                 self.handle,
                 Some(zfs_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
             )
-        };
-        if result == 0 {
-            Ok(ctx.vec)
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(ctx.vec)
     }
 
     /// Get all child datasets of this one, recursively, of all types (snapshot, filesystem, etc.).
@@ -369,19 +341,23 @@ impl Dataset {
             libzfs: self.libzfs,
             vec: vec![],
         };
-        let result = unsafe {
+        ztry!(unsafe {
             sys::zfs_iter_dependents(
                 self.handle,
                 1, // allow recursion
                 Some(zfs_iter_collect),
                 &mut ctx as *mut _ as *mut c_void,
             )
-        };
-        if result == 0 {
-            Ok(ctx.vec)
-        } else {
-            Err(ZfsError::last_error(self.libzfs).into())
-        }
+        }, self.libzfs);
+        Ok(ctx.vec)
+    }
+
+    pub fn get_send_space(&self, from: Option<&SafeString>, flags: sys::lzc_send_flags::Type) -> Result<u64> {
+        let name: *const c_char = unsafe { sys::zfs_get_name(self.handle) };
+        let from: *const c_char = from.map(|s| s.as_ptr()).unwrap_or(ptr::null());
+        let mut space = 0u64;
+        ztry!(unsafe { sys::lzc_send_space(name, from, flags, &mut space as *mut _) }, self.libzfs);
+        Ok(space)
     }
 }
 

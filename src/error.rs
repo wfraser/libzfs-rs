@@ -4,6 +4,24 @@ use std::ffi::{CStr};
 use std::fmt;
 use std::mem::transmute;
 
+#[macro_export]
+macro_rules! ztry {
+    ($stuff:expr, $lzfs:expr) => {
+        {
+            let result = $stuff;
+            if result != 0 {
+                let e = ZfsError::last_error($lzfs);
+                if matches!(e.code, sys::zfs_error::EZFS_UNKNOWN | sys::zfs_error::EZFS_SUCCESS) {
+                    return Err(Error::Sys(std::io::Error::last_os_error()));
+                } else {
+                    return Err(Error::Zfs(e));
+                }
+            }
+            result
+        }
+    };
+}
+
 pub type Result<T> = ::std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
