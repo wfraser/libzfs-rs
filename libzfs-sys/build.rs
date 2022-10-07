@@ -1,6 +1,3 @@
-extern crate bindgen;
-extern crate pkg_config;
-
 use std::env;
 use std::path::PathBuf;
 
@@ -19,9 +16,11 @@ fn main() {
         .opaque_type("libzfs_handle")
         .opaque_type("zfs_handle")
         .opaque_type("zpool_handle")
+        .blocklist_item("MS_.*")  // mount flags like MS_RDONLY, otherwise we get duplicates from somewhere
         .generate()
         .expect("failed to generate libzfs bindings");
 
-    bindings.write_to_file(PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs"))
+    let path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
+    bindings.write_to_file(path)
         .expect("failed to write libzfs bindings");
 }
