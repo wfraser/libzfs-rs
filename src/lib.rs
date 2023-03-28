@@ -2,11 +2,11 @@
 //! Copyright 2018 by William R. Fraser <wfraser@codewise.org>
 
 use libzfs_sys as sys;
-use os_pipe::PipeReader;
 
 use std::ffi::CStr;
-use std::io::Read;
-use std::os::fd::AsRawFd;
+use std::io;
+use std::marker::PhantomData;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 use std::thread::{self, JoinHandle};
@@ -367,16 +367,17 @@ impl Dataset {
         Ok(space)
     }
 
-    pub fn send(&self, from_fq: Option<SafeString>, flags: ZfsSendFlags) -> Result<ZfsSend> {
-        let (reader, writer) = os_pipe::pipe()
-            .map_err(Error::Sys)?;
+    pub fn send(
+        &self,
+        from_fq: Option<SafeString>,
+        fd: OwnedFd,
+        flags: ZfsSendFlags,
+    ) -> Result<ZfsSend<'_>> {
+        // Best-effort attempt to set a big buffer size in case fd is a pipe.
+        let _ = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETPIPE_SZ, 1_048_576_i32) };
 
-        // Best-effort attempt to set a big buffer size.
-        let _ = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 1_048_576_i32) };
-
-        // FIXME: if the caller drops the zfs interface before the thread finishes, this will
-        // likely segfault.
-        #[repr(transparent)]
+        // Safety is ensured by tying the lifetime of the ZfsSend holding the thread to the
+        // lifetime of the dataset, which holds the libzfs handle.
         struct Wrap(*mut sys::libzfs_handle);
         unsafe impl Send for Wrap {}
         impl Wrap {
@@ -392,40 +393,40 @@ impl Dataset {
                 sys::lzc_send(
                     fqname.as_ptr(),
                     from_fq.as_ref().map(|s| s.as_ptr()).unwrap_or(ptr::null()),
-                    writer.as_raw_fd(),
+                    fd.as_raw_fd(),
                     flags,
                 )
             }, w.ptr());
+            drop(fd);
             Ok(())
         });
 
-        Ok(ZfsSend { reader, thread })
+        Ok(ZfsSend {
+            _dataset: PhantomData,
+            thread,
+        })
     }
 }
 
-pub struct ZfsSend {
-    reader: PipeReader,
+#[derive(Debug)]
+pub struct ZfsSendPanicked();
+impl std::fmt::Display for ZfsSendPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("zfs send thread panicked")
+    }
+}
+impl std::error::Error for ZfsSendPanicked {}
+
+pub struct ZfsSend<'a> {
+    _dataset: PhantomData<&'a Dataset>,
     thread: JoinHandle<Result<()>>,
 }
 
-impl Read for ZfsSend {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf)
-    }
-}
-
-impl ZfsSend {
-    /// Unpack into the stream file descriptor and a handle to the thread doing the send.
-    ///
-    /// This may be useful to pass the FD directly to another process as part of a pipe.
-    pub fn into_inner(self) -> (PipeReader, JoinHandle<Result<()>>) {
-        (self.reader, self.thread)
-    }
-
-    /// After the send is done, call this to check whether the operation succeeded or returned an error code.
-    pub fn finish(self) -> Result<()> {
-        drop(self.reader);
-        self.thread.join().expect("lzc_send thread panicked!")
+impl<'a> ZfsSend<'a> {
+    /// Blocks the current thread until the send is done, whether successful or failure.
+    pub fn wait(self) -> Result<()> {
+        self.thread.join()
+            .unwrap_or(Err(Error::Sys(io::Error::new(io::ErrorKind::Other, ZfsSendPanicked()))))
     }
 }
 
